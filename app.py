@@ -59,10 +59,11 @@ def parse_ei(pdf_bytes):
                 if m:
                     current_material = m.group(1)
                     continue
-                # BOM row: {bom} {CN} {qty} {asm_rate} / EA {ext_asm} {unit_price} {ext_price} {weight} KG
+                # BOM row: {bom} {CN} {qty} {asm_rate} / [EA] {ext_asm} {unit_price} ...
+                # "EA" is optional — some EI formats omit it after the slash
                 if current_material:
                     m2 = re.match(
-                        r'^\d+\s+[A-Z]{2}\s+[\d,]+\s+[\d.]+\s+/\s+EA\s+[\d,.]+\s+([\d.]+)',
+                        r'^\d+\s+[A-Z]{2}\s+[\d,]+\s+[\d.]+\s+/\s+(?:EA\s+)?[\d,.]+\s+([\d.]+)',
                         line
                     )
                     if m2:

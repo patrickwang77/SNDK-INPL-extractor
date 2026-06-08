@@ -282,7 +282,8 @@ function parseEI(text) {
     const mHead = line.match(/^\d+\s+([\w\-]+)\s+EA\s+([\d,]+)/);
     if (mHead) { currentMat = mHead[1]; continue; }
     if (currentMat) {
-      const mBom = line.match(/^\d+\s+[A-Z]{2}\s+[\d,]+\s+[\d.]+\s+\/\s+EA\s+[\d,.]+\s+([\d.]+)/);
+      // "EA" is optional after "/" — some EI formats omit it
+      const mBom = line.match(/^\d+\s+[A-Z]{2}\s+[\d,]+\s+[\d.]+\s+\/\s+(?:EA\s+)?[\d,.]+\s+([\d.]+)/);
       if (mBom) { prices[currentMat] = parseFloat(mBom[1]); currentMat = null; }
     }
   }
