@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PK 文件數字提取工具</title>
+<!-- PDF.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<!-- SheetJS for XLSX export -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #f5f6fa;
+    min-height: 100vh;
+    padding: 32px 16px 80px;
+    color: #333;
+  }
+  .container { max-width: 900px; margin: 0 auto; }
+
+  .header { text-align: center; margin-bottom: 28px; }
+  .header h1 { font-size: 28px; font-weight: 700; color: #1a1a2e; }
+  .header p { color: #666; margin-top: 6px; font-size: 14px; }
+
+  .upload-zone {
+    border: 2px dashed #7b9fff;
+    border-radius: 14px;
+    background: #fff;
+    padding: 48px 32px;
+    text-align: center;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s;
+    position: relative;
+  }
+  .upload-zone:hover, .upload-zone.drag-over { background: #f0f4ff; border-color: #4a6cf7; }
+  .upload-zone input[type=file] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+  }
+  .upload-zone .folder-icon { font-size: 56px; margin-bottom: 16px; display: block; }
+  .upload-zone .upload-title { font-size: 18px; font-weight: 600; color: #1a1a2e; margin-bottom: 14px; }
+  .upload-zone .supported { font-size: 13px; color: #888; line-height: 1.7; max-width: 600px; margin: 0 auto 18px; }
+  .format-tags { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+  .format-tag { padding: 4px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; border: 1.5px solid #4a6cf7; color: #4a6cf7; background: #fff; }
+
+  .file-list { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; }
+  .file-item { display: flex; align-items: center; gap: 10px; background: #fff; border-radius: 8px; padding: 10px 14px; border: 1px solid #e0e4f0; font-size: 14px; }
+  .file-item .file-name { flex: 1; font-weight: 500; }
+  .file-item .file-type { font-size: 12px; padding: 2px 10px; border-radius: 12px; font-weight: 600; }
+  .file-item .file-type.pl { background: #e8f4fd; color: #2196f3; }
+  .file-item .file-type.ei { background: #e8fdf0; color: #4caf50; }
+  .file-item .file-type.unknown { background: #f5f5f5; color: #888; }
+  .file-item .remove-btn { background: none; border: none; cursor: pointer; color: #bbb; font-size: 18px; padding: 0 4px; }
+  .file-item .remove-btn:hover { color: #e74c3c; }
+
+  .extract-btn {
+    display: block; width: 100%; margin-top: 16px;
+    padding: 14px; border-radius: 10px; border: none;
+    background: linear-gradient(135deg, #4a6cf7, #7b9fff);
+    color: #fff; font-size: 16px; font-weight: 700; cursor: pointer; transition: opacity 0.2s;
+  }
+  .extract-btn:hover { opacity: 0.92; }
+  .extract-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .status { margin-top: 14px; padding: 12px 16px; border-radius: 8px; font-size: 14px; display: none; }
+  .status.error { background: #fff0f0; color: #c0392b; border: 1px solid #f5c6cb; }
+  .status.success { background: #f0fff4; color: #27ae60; border: 1px solid #b2dfdb; }
+  .status.loading { background: #f0f4ff; color: #4a6cf7; border: 1px solid #c3d0fd; }
+
+  .results { margin-top: 24px; display: none; }
+  .results-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .results-header h2 { font-size: 18px; font-weight: 700; }
+  .results-meta { font-size: 13px; color: #888; }
+  .table-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid #e0e4f0; }
+  table { width: 100%; border-collapse: collapse; background: #fff; font-size: 13px; }
+  thead th { background: #f0f4ff; padding: 10px 12px; text-align: left; font-weight: 700; color: #444; border-bottom: 2px solid #e0e4f0; white-space: nowrap; }
+  tbody td { padding: 9px 12px; border-bottom: 1px solid #f0f0f0; white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: #f8f9ff; }
+
+  .export-bar {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: #fff; border-top: 1px solid #e0e4f0;
+    padding: 12px 24px;
+    display: flex; align-items: center; justify-content: flex-end; gap: 10px; z-index: 100;
+  }
+  .btn-export-csv { padding: 10px 22px; border-radius: 8px; border: none; cursor: pointer; background: linear-gradient(135deg, #6e4cf7, #9b6cf7); color: #fff; font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; transition: opacity 0.2s; }
+  .btn-export-csv:hover { opacity: 0.9; }
+  .btn-export-csv:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-export-xlsx { padding: 10px 22px; border-radius: 8px; border: none; cursor: pointer; background: linear-gradient(135deg, #27ae60, #2ecc71); color: #fff; font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; transition: opacity 0.2s; }
+  .btn-export-xlsx:hover { opacity: 0.9; }
+  .btn-export-xlsx:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-clear { padding: 10px 18px; border-radius: 8px; font-size: 15px; font-weight: 600; background: #f5f5f5; border: 1px solid #ddd; color: #555; cursor: pointer; transition: background 0.2s; }
+  .btn-clear:hover { background: #ececec; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>📋 PK 文件數字提取工具</h1>
+    <p>自動識別 PL / EI 格式，提取 INPL 所需欄位｜支援 PDF 文件｜完全在瀏覽器執行，不上傳伺服器</p>
+  </div>
+
+  <div class="upload-zone" id="uploadZone">
+    <input type="file" id="fileInput" multiple accept=".pdf,.PDF">
+    <span class="folder-icon">📁</span>
+    <div class="upload-title">拖曳或點擊選擇檔案（可多選）</div>
+    <div class="supported">
+      支援格式：PL（Packing List）/ EI（Export Invoice）PDF<br>
+      請同時上傳 PL 和 EI 兩份 PDF 檔案以完成提取
+    </div>
+    <div class="format-tags"><span class="format-tag">PDF</span></div>
+  </div>
+
+  <div class="file-list" id="fileList"></div>
+  <button class="extract-btn" id="extractBtn" disabled>🔍 開始提取</button>
+  <div class="status" id="status"></div>
+
+  <div class="results" id="results">
+    <div class="results-header">
+      <h2>提取結果</h2>
+      <span class="results-meta" id="resultsMeta"></span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead id="tableHead"></thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="export-bar">
+  <button class="btn-export-csv" id="exportCsvBtn" disabled onclick="exportCSV()">⬇ 匯出 CSV</button>
+  <button class="btn-export-xlsx" id="exportXlsxBtn" disabled onclick="exportXLSX()">⬇ 匯出 XLSX</button>
+  <button class="btn-clear" onclick="clearAll()">✕ 清除</button>
+</div>
+
+<script>
+// Configure PDF.js worker
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+const HEADERS = ['日期', 'STO #', 'Line', 'QSS 料號', '數量', '廠商', '預計入庫倉', '出貨指示類型', 'AI#', '單價'];
+const FIXED = { vendor: 'SHNSSD03', warehouse: 'S01', shipType: 'B2B', ai: '　' };
+
+let uploadedFiles = [];
+let extractedRows = [];
+let extractedSTO = '';
+
+const uploadZone = document.getElementById('uploadZone');
+const fileInput = document.getElementById('fileInput');
+const fileList = document.getElementById('fileList');
+const extractBtn = document.getElementById('extractBtn');
+const statusEl = document.getElementById('status');
+const resultsEl = document.getElementById('results');
+const exportCsvBtn = document.getElementById('exportCsvBtn');
+const exportXlsxBtn = document.getElementById('exportXlsxBtn');
+
+// Drag & drop
+uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('drag-over'); });
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
+uploadZone.addEventListener('drop', e => { e.preventDefault(); uploadZone.classList.remove('drag-over'); addFiles([...e.dataTransfer.files]); });
+fileInput.addEventListener('change', () => { addFiles([...fileInput.files]); fileInput.value = ''; });
+
+function detectType(name) {
+  const u = name.toUpperCase();
+  if (u.startsWith('PL_') || u.startsWith('PL ')) return 'pl';
+  if (u.startsWith('EI_') || u.startsWith('EI ')) return 'ei';
+  return 'unknown';
+}
+
+function addFiles(files) {
+  for (const f of files) {
+    if (!uploadedFiles.find(x => x.name === f.name && x.size === f.size)) uploadedFiles.push(f);
+  }
+  renderFileList();
+  extractBtn.disabled = uploadedFiles.length < 2;
+}
+
+function renderFileList() {
+  fileList.innerHTML = '';
+  uploadedFiles.forEach((f, i) => {
+    const type = detectType(f.name);
+    const label = type === 'pl' ? 'Packing List' : type === 'ei' ? 'Export Invoice' : '未知';
+    const div = document.createElement('div');
+    div.className = 'file-item';
+    div.innerHTML = `<span>📄</span><span class="file-name">${f.name}</span><span class="file-type ${type}">${label}</span><button class="remove-btn" onclick="removeFile(${i})">×</button>`;
+    fileList.appendChild(div);
+  });
+}
+
+function removeFile(i) {
+  uploadedFiles.splice(i, 1);
+  renderFileList();
+  extractBtn.disabled = uploadedFiles.length < 2;
+  if (!uploadedFiles.length) clearResults();
+}
+
+// Extract all text from a PDF File object
+async function extractPdfText(file) {
+  const ab = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: ab }).promise;
+  let fullText = '';
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    // Sort items by Y then X to reconstruct reading order
+    const items = content.items.slice().sort((a, b) => {
+      const dy = Math.round(b.transform[5]) - Math.round(a.transform[5]);
+      return dy !== 0 ? dy : a.transform[4] - b.transform[4];
+    });
+    // Group into lines by Y position
+    const lines = [];
+    let lastY = null, curLine = [];
+    for (const item of items) {
+      const y = Math.round(item.transform[5]);
+      if (lastY !== null && Math.abs(y - lastY) > 3) {
+        lines.push(curLine.map(x => x.str).join(' '));
+        curLine = [];
+      }
+      curLine.push(item);
+      lastY = y;
+    }
+    if (curLine.length) lines.push(curLine.map(x => x.str).join(' '));
+    fullText += lines.join('\n') + '\n';
+  }
+  return fullText;
+}
+
+// Parse PL text → [{line, material, qty}], sto
+function parsePL(text) {
+  const items = [];
+  let sto = null;
+  for (const line of text.split('\n')) {
+    // Pattern: {item_no} {material} {qty}EA {sto} {item_no}
+    const m = line.match(/^(\d+)\s+([\w\-]+)\s+([\d,]+)\s*EA\s+(\d+)\s+\d+/);
+    if (m) {
+      items.push({
+        line: parseInt(m[1]),
+        material: m[2],
+        qty: parseInt(m[3].replace(/,/g, '')),
+      });
+      if (!sto) sto = m[4];
+    }
+  }
+  return { items, sto };
+}
+
+// Parse EI text → {material: unitPrice}
+function parseEI(text) {
+  const prices = {};
+  const lines = text.split('\n');
+  let currentMat = null;
+  for (const line of lines) {
+    // Item header: {seq} {material} EA {qty}
+    const mHead = line.match(/^\d+\s+([\w\-]+)\s+EA\s+([\d,]+)/);
+    if (mHead) { currentMat = mHead[1]; continue; }
+    // BOM row: {bom} {CN} {qty} {rate} / EA {ext} {unit_price} ...
+    if (currentMat) {
+      const mBom = line.match(/^\d+\s+[A-Z]{2}\s+[\d,]+\s+[\d.]+\s+\/\s+EA\s+[\d,.]+\s+([\d.]+)/);
+      if (mBom) {
+        prices[currentMat] = parseFloat(mBom[1]);
+        currentMat = null;
+      }
+    }
+  }
+  return prices;
+}
+
+function buildRows(items, sto, prices) {
+  const today = new Date();
+  const dateStr = `${today.getFullYear()}/${today.getMonth()+1}/${today.getDate()}`;
+  return items.map(item => [
+    dateStr,
+    sto || '',
+    item.line,
+    '7SD' + item.material,
+    item.qty,
+    FIXED.vendor,
+    FIXED.warehouse,
+    FIXED.shipType,
+    FIXED.ai,
+    prices[item.material] ?? '',
+  ]);
+}
+
+extractBtn.addEventListener('click', async () => {
+  showStatus('loading', '🔄 正在解析 PDF，請稍候...');
+  extractBtn.disabled = true;
+  try {
+    // Auto-detect PL and EI from filename or content
+    let plFile = uploadedFiles.find(f => detectType(f.name) === 'pl');
+    let eiFile = uploadedFiles.find(f => detectType(f.name) === 'ei');
+
+    // Fallback: scan content if filenames don't match
+    if (!plFile || !eiFile) {
+      for (const f of uploadedFiles) {
+        const t = await extractPdfText(f);
+        if (!plFile && t.includes('Packing List')) plFile = f;
+        else if (!eiFile && t.includes('Unit Price')) eiFile = f;
+      }
+    }
+
+    if (!plFile) { showStatus('error', '❌ 找不到 Packing List (PL) PDF'); extractBtn.disabled = false; return; }
+    if (!eiFile) { showStatus('error', '❌ 找不到 Export Invoice (EI) PDF'); extractBtn.disabled = false; return; }
+
+    const [plText, eiText] = await Promise.all([extractPdfText(plFile), extractPdfText(eiFile)]);
+    const { items, sto } = parsePL(plText);
+    const prices = parseEI(eiText);
+
+    if (!items.length) { showStatus('error', '❌ PL 中未找到任何品項，請確認格式是否正確'); extractBtn.disabled = false; return; }
+
+    extractedRows = buildRows(items, sto, prices);
+    extractedSTO = sto || 'INPL';
+
+    showStatus('success', `✅ 提取成功！共 ${items.length} 筆資料，STO# ${sto}`);
+    renderTable(extractedRows);
+    exportCsvBtn.disabled = false;
+    exportXlsxBtn.disabled = false;
+  } catch (err) {
+    showStatus('error', '❌ 解析錯誤：' + err.message);
+  }
+  extractBtn.disabled = false;
+});
+
+function renderTable(rows) {
+  document.getElementById('tableHead').innerHTML =
+    '<tr>' + HEADERS.map(h => `<th>${h}</th>`).join('') + '</tr>';
+  document.getElementById('tableBody').innerHTML =
+    rows.map(row => '<tr>' + row.map(c => `<td>${c ?? ''}</td>`).join('') + '</tr>').join('');
+  document.getElementById('resultsMeta').textContent = `共 ${rows.length} 筆`;
+  resultsEl.style.display = 'block';
+}
+
+function showStatus(type, msg) {
+  statusEl.className = `status ${type}`;
+  statusEl.textContent = msg;
+  statusEl.style.display = 'block';
+}
+
+function todayTag() {
+  const d = new Date();
+  return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+}
+
+function exportCSV() {
+  if (!extractedRows.length) return;
+  const BOM = '﻿';
+  const rows = [HEADERS, ...extractedRows];
+  const csv = BOM + rows.map(r => r.map(c => `"${String(c ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
+  download(new Blob([csv], { type: 'text/csv;charset=utf-8;' }), `INPL_${extractedSTO}_${todayTag()}.csv`);
+}
+
+function exportXLSX() {
+  if (!extractedRows.length) return;
+  const ws = XLSX.utils.aoa_to_sheet([HEADERS, ...extractedRows]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'INPL');
+  XLSX.writeFile(wb, `INPL_${extractedSTO}_${todayTag()}.xlsx`);
+}
+
+function download(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function clearAll() {
+  uploadedFiles = []; extractedRows = []; extractedSTO = '';
+  renderFileList();
+  clearResults();
+  extractBtn.disabled = true;
+  statusEl.style.display = 'none';
+}
+
+function clearResults() {
+  resultsEl.style.display = 'none';
+  exportCsvBtn.disabled = true;
+  exportXlsxBtn.disabled = true;
+}
+</script>
+</body>
+</html>
