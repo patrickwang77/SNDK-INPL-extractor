@@ -197,7 +197,7 @@ function removeFile(i) {
   if (!uploadedFiles.length) clearResults();
 }
 
-// Extract all text from a PDF File object
+// Extract all text from a PDF File object, reconstructing lines by Y position
 async function extractPdfText(file) {
   const ab = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: ab }).promise;
@@ -205,17 +205,17 @@ async function extractPdfText(file) {
   for (let p = 1; p <= pdf.numPages; p++) {
     const page = await pdf.getPage(p);
     const content = await page.getTextContent();
-    // Sort items by Y then X to reconstruct reading order
-    const items = content.items.slice().sort((a, b) => {
-      const dy = Math.round(b.transform[5]) - Math.round(a.transform[5]);
-      return dy !== 0 ? dy : a.transform[4] - b.transform[4];
+    // Sort by Y desc (top→bottom), then X asc (left→right)
+    const items = content.items.filter(i => i.str.trim()).sort((a, b) => {
+      const dy = b.transform[5] - a.transform[5];
+      return Math.abs(dy) > 4 ? dy : a.transform[4] - b.transform[4];
     });
-    // Group into lines by Y position
+    // Group into lines: items within 4pt vertical range = same line
     const lines = [];
     let lastY = null, curLine = [];
     for (const item of items) {
-      const y = Math.round(item.transform[5]);
-      if (lastY !== null && Math.abs(y - lastY) > 3) {
+      const y = item.transform[5];
+      if (lastY !== null && Math.abs(y - lastY) > 4) {
         lines.push(curLine.map(x => x.str).join(' '));
         curLine = [];
       }
@@ -228,43 +228,75 @@ async function extractPdfText(file) {
   return fullText;
 }
 
+// Flatten entire PDF to a single string (fallback for complex layouts)
+async function extractPdfFlat(file) {
+  const ab = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: ab }).promise;
+  let text = '';
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    text += content.items.map(i => i.str).join(' ') + ' ';
+  }
+  return text;
+}
+
 // Parse PL text → [{line, material, qty}], sto
+// Tries line-by-line first; falls back to flat-string search
 function parsePL(text) {
   const items = [];
   let sto = null;
+
+  // Strategy 1: line-by-line (works when text is well-reconstructed)
   for (const line of text.split('\n')) {
-    // Pattern: {item_no} {material} {qty}EA {sto} {item_no}
     const m = line.match(/^(\d+)\s+([\w\-]+)\s+([\d,]+)\s*EA\s+(\d+)\s+\d+/);
     if (m) {
-      items.push({
-        line: parseInt(m[1]),
-        material: m[2],
-        qty: parseInt(m[3].replace(/,/g, '')),
-      });
+      items.push({ line: parseInt(m[1]), material: m[2], qty: parseInt(m[3].replace(/,/g, '')) });
       if (!sto) sto = m[4];
     }
   }
+
+  // Strategy 2: flat regex scan (handles mis-reconstructed lines)
+  if (!items.length) {
+    const flat = text.replace(/\n/g, ' ');
+    // Match: {item_no} {material} {qty}EA {sto} {same_item_no}
+    const re = /\b(\d{1,3})\s+([\w][\w\-]{4,})\s+([\d,]+)\s*EA\s+(\d{9,10})\s+\d+/g;
+    let m;
+    while ((m = re.exec(flat)) !== null) {
+      items.push({ line: parseInt(m[1]), material: m[2], qty: parseInt(m[3].replace(/,/g, '')) });
+      if (!sto) sto = m[4];
+    }
+  }
+
   return { items, sto };
 }
 
 // Parse EI text → {material: unitPrice}
 function parseEI(text) {
   const prices = {};
+
+  // Strategy 1: line-by-line (two-pass: header then BOM row)
   const lines = text.split('\n');
   let currentMat = null;
   for (const line of lines) {
-    // Item header: {seq} {material} EA {qty}
     const mHead = line.match(/^\d+\s+([\w\-]+)\s+EA\s+([\d,]+)/);
     if (mHead) { currentMat = mHead[1]; continue; }
-    // BOM row: {bom} {CN} {qty} {rate} / EA {ext} {unit_price} ...
     if (currentMat) {
       const mBom = line.match(/^\d+\s+[A-Z]{2}\s+[\d,]+\s+[\d.]+\s+\/\s+EA\s+[\d,.]+\s+([\d.]+)/);
-      if (mBom) {
-        prices[currentMat] = parseFloat(mBom[1]);
-        currentMat = null;
-      }
+      if (mBom) { prices[currentMat] = parseFloat(mBom[1]); currentMat = null; }
     }
   }
+
+  // Strategy 2: flat scan for "material ... / EA ... unit_price"
+  if (!Object.keys(prices).length) {
+    const flat = text.replace(/\n/g, ' ');
+    const re = /(\d+)\s+([\w\-]{5,})\s+EA\s+[\d,]+[\s\S]{1,200}?\/\s*EA\s+[\d,.]+\s+([\d.]+)/g;
+    let m;
+    while ((m = re.exec(flat)) !== null) {
+      if (!prices[m[2]]) prices[m[2]] = parseFloat(m[3]);
+    }
+  }
+
   return prices;
 }
 
